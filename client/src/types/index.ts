@@ -10,6 +10,7 @@ export interface WebRTCContextType {
   isAudioEnabled: boolean;
   role: 'Controller' | 'Car' | null;
   isReconnecting?: boolean;
+  users: Record<string, any>; // Users in current room
   connect: (role: 'Controller' | 'Car') => void;
   toggleVideo: () => void;
   toggleAudio: () => void;
