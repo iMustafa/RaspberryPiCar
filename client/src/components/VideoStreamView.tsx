@@ -4,6 +4,7 @@ import { useWebRTC } from '../hooks/useWebRTC';
 import { useControls } from '../hooks/useControls';
 import VideoElement from './VideoElement';
 import VideoControls from './VideoControls';
+import GamepadControl from './GamepadControl';
 
 const VideoStreamView: React.FC = () => {
   const { localStream, remoteStream, disconnect, role, isReconnecting } = useWebRTC();
@@ -37,7 +38,7 @@ const VideoStreamView: React.FC = () => {
 
   return (
     <div 
-      className="relative w-full h-screen bg-black overflow-hidden cursor-none"
+      className="relative w-full h-screen bg-black overflow-hidden"
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >
@@ -75,6 +76,9 @@ const VideoStreamView: React.FC = () => {
       
       {/* Video controls */}
       <VideoControls />
+      
+      {/* Gamepad control (only for Controller) */}
+      <GamepadControl />
       
       {/* Loading state */}
       {!remoteStream && (

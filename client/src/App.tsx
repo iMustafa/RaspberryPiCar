@@ -1,5 +1,5 @@
 import React from 'react';
-import { WebRTCProvider, ControlsProvider } from './contexts';
+import { WebRTCProvider, ControlsProvider, GamepadProvider } from './contexts';
 import { useWebRTC } from './hooks';
 import { VideoStreamView, LandingPage } from './components';
 
@@ -8,7 +8,9 @@ const App: React.FC = () => {
 
   return (
     <ControlsProvider>
-      {isConnected ? <VideoStreamView /> : <LandingPage />}
+      <GamepadProvider>
+        {isConnected ? <VideoStreamView /> : <LandingPage />}
+      </GamepadProvider>
     </ControlsProvider>
   );
 };

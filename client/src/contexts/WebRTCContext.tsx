@@ -23,7 +23,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
   const [role, setRole] = useState<'Controller' | 'Car' | null>(null);
-  const [currentRoom, setCurrentRoom] = useState<string | null>(null);
+  const [, setCurrentRoom] = useState<string | null>(null);
   const [users, setUsers] = useState<Record<string, any>>({});
   const [currentCall, setCurrentCall] = useState<string | null>(null);
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -518,7 +518,8 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       connect,
       toggleVideo,
       toggleAudio,
-      disconnect
+      disconnect,
+      socket: socket.current
     }}>
       {children}
     </WebRTCContext.Provider>

@@ -14,6 +14,7 @@ export interface WebRTCContextType {
   toggleVideo: () => void;
   toggleAudio: () => void;
   disconnect: () => void;
+  socket?: any; // Expose socket for gamepad context
 }
 
 export interface ControlsContextType {
