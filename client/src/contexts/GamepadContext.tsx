@@ -27,7 +27,7 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const gamepadPeerConnectionRef = useRef<RTCPeerConnection | null>(null);
 
   const piUser = useMemo(() => {
-    return Object.values(gamepadUsers).find((user: any) => user.userInfo?.role === 'Car');
+    return Object.values(gamepadUsers).find((user: any) => user.userInfo?.role === 'Pi');
   }, [gamepadUsers])
 
   // Gamepad hook configuration

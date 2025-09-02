@@ -36,12 +36,24 @@ export class SocketHandler {
       this.handleSignaling(socket, data, 'offer');
     });
 
+    socket.on('gamepad-offer', (data: SignalingData) => {
+      this.handleSignaling(socket, data, 'gamepad-offer');
+    });
+
     socket.on('answer', (data: SignalingData) => {
       this.handleSignaling(socket, data, 'answer');
     });
 
+    socket.on('gamepad-answer', (data: SignalingData) => {
+      this.handleSignaling(socket, data, 'gamepad-answer');
+    });
+
     socket.on('ice-candidate', (data: SignalingData) => {
       this.handleSignaling(socket, data, 'ice-candidate');
+    });
+
+    socket.on('gamepad-ice-candidate', (data: SignalingData) => {
+      this.handleSignaling(socket, data, 'gamepad-ice-candidate');
     });
 
     socket.on('message', (data: MessageData) => {

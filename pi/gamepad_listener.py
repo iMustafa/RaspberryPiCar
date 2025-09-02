@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Dict, Any
 import aiortc
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
+from aiortc.sdp import candidate_from_sdp
 from aiortc.contrib.signaling import object_from_string, object_to_string
 
 class GamepadListener:
@@ -26,6 +27,7 @@ class GamepadListener:
         self.pc = None
         self.data_channel = None
         self.controller_id = None
+        self.pending_ice: list[dict] = []
         
     def setup_handlers(self):
         """Setup Socket.IO event handlers"""
@@ -40,7 +42,7 @@ class GamepadListener:
                 "roomId": self.room_id,
                 "userInfo": {
                     "name": self.username,
-                    "role": "Car"  # Pi acts as the Car receiving gamepad commands
+                    "role": "Pi"  # Pi acts as the Car receiving gamepad commands
                 }
             }
             await self.sio.emit('join-room', join_data)
@@ -72,38 +74,39 @@ class GamepadListener:
             user_id = data.get('userId')
             print(f"[{datetime.now().strftime('%H:%M:%S')}] User left: {user_id}")
         
-        @self.sio.event
-        async def offer(data: Dict[str, Any]):
+        @self.sio.on('gamepad-offer')
+        async def gamepad_offer(data: Dict[str, Any]):
             from_user = data.get('fromUserId')
             offer_data = data.get('offer')
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Received WebRTC offer from: {from_user}")
-            
-            # Since we're in GamepadChannel, this should be a gamepad offer
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Received Gamepad offer from: {from_user}")
             if offer_data and from_user:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Processing offer as gamepad offer...")
                 await self.handle_gamepad_offer(from_user, offer_data)
         
-        @self.sio.event
-        async def answer(data: Dict[str, Any]):
+        @self.sio.on('gamepad-answer')
+        async def gamepad_answer(data: Dict[str, Any]):
             from_user = data.get('fromUserId')
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Received WebRTC answer from: {from_user}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Received Gamepad answer from: {from_user}")
         
-        @self.sio.event
-        async def ice_candidate(data: Dict[str, Any]):
+        @self.sio.on('gamepad-ice-candidate')
+        async def gamepad_ice_candidate(data: Dict[str, Any]):
             from_user = data.get('fromUserId')
             candidate_data = data.get('candidate')
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Received ICE candidate from: {from_user}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Received Gamepad ICE candidate from: {from_user}")
             
             if self.pc and candidate_data:
                 try:
-                    candidate = RTCIceCandidate(
-                        candidate=candidate_data['candidate'],
-                        sdpMid=candidate_data.get('sdpMid'),
-                        sdpMLineIndex=candidate_data.get('sdpMLineIndex')
-                    )
-                    await self.pc.addIceCandidate(candidate)
+                    # If remote description not set yet, queue ICE candidate
+                    if not self.pc.remoteDescription:
+                        self.pending_ice.append(candidate_data)
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] Queued ICE candidate (remoteDescription not set yet)")
+                    else:
+                        # Parse candidate string via candidate_from_sdp
+                        cand = candidate_from_sdp(candidate_data['candidate'])
+                        cand.sdpMid = candidate_data.get('sdpMid')
+                        cand.sdpMLineIndex = candidate_data.get('sdpMLineIndex')
+                        await self.pc.addIceCandidate(cand)
                 except Exception as e:
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Error adding ICE candidate: {e}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Error adding Gamepad ICE candidate: {e}")
         
         @self.sio.event
         async def message(data: Dict[str, Any]):
@@ -156,6 +159,19 @@ class GamepadListener:
             # Set remote description
             offer = RTCSessionDescription(sdp=offer_data['sdp'], type=offer_data['type'])
             await self.pc.setRemoteDescription(offer)
+
+            # Apply any pending ICE candidates
+            if self.pending_ice:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Applying {len(self.pending_ice)} queued ICE candidates")
+                for c in self.pending_ice:
+                    try:
+                        cand = candidate_from_sdp(c['candidate'])
+                        cand.sdpMid = c.get('sdpMid')
+                        cand.sdpMLineIndex = c.get('sdpMLineIndex')
+                        await self.pc.addIceCandidate(cand)
+                    except Exception as e:
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] Failed to apply queued ICE candidate: {e}")
+                self.pending_ice.clear()
             
             # Create answer
             answer = await self.pc.createAnswer()
