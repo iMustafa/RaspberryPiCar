@@ -137,7 +137,7 @@ class GamepadListener:
                             'sdpMLineIndex': candidate.sdpMLineIndex
                         }
                     }
-                    await self.sio.emit('ice-candidate', candidate_data)
+                    await self.sio.emit('gamepad-ice-candidate', candidate_data)
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent gamepad ICE candidate to: {from_user}")
             
             # Handle incoming data channel
@@ -169,7 +169,7 @@ class GamepadListener:
                     'sdp': answer.sdp
                 }
             }
-            await self.sio.emit('answer', answer_data)
+            await self.sio.emit('gamepad-answer', answer_data)
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent gamepad answer to: {from_user}")
             
         except Exception as e:

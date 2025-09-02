@@ -108,7 +108,7 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // Find the Car user in the GamepadChannel
         if (piUser) {
           console.log('Sending gamepad ICE candidate to:', piUser.userId);
-          socket.emit('ice-candidate', {
+          socket.emit('gamepad-ice-candidate', {
             targetUserId: piUser.userId,
             candidate: {
               candidate: event.candidate.candidate,
@@ -215,7 +215,7 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
         gamepadPeerConnectionRef.current.createOffer()
           .then(async (offer) => {
             await gamepadPeerConnectionRef.current!.setLocalDescription(offer);
-            socket.emit('offer', {
+            socket.emit('gamepad-offer', {
               targetUserId: piUser.userId,
               offer: {
                 type: offer.type,
@@ -244,7 +244,7 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const answer = await gamepadPeerConnectionRef.current.createAnswer();
         await gamepadPeerConnectionRef.current.setLocalDescription(answer);
 
-        socket.emit('answer', {
+        socket.emit('gamepad-answer', {
           targetUserId: data.fromUserId,
           answer: {
             type: answer.type,
@@ -278,14 +278,14 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     };
 
-    socket.on('offer', handleGamepadOffer);
-    socket.on('answer', handleGamepadAnswer);
-    socket.on('ice-candidate', handleGamepadIceCandidate);
+    socket.on('gamepad-offer', handleGamepadOffer);
+    socket.on('gamepad-answer', handleGamepadAnswer);
+    socket.on('gamepad-ice-candidate', handleGamepadIceCandidate);
 
     return () => {
-      socket.off('offer', handleGamepadOffer);
-      socket.off('answer', handleGamepadAnswer);
-      socket.off('ice-candidate', handleGamepadIceCandidate);
+      socket.off('gamepad-offer', handleGamepadOffer);
+      socket.off('gamepad-answer', handleGamepadAnswer);
+      socket.off('gamepad-ice-candidate', handleGamepadIceCandidate);
     };
   }, [socket, role]);
 
