@@ -11,14 +11,17 @@ import json
 import struct
 from datetime import datetime
 from typing import Dict, Any
+import logging
 import aiortc
+import argparse
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
 from aiortc.sdp import candidate_from_sdp
 from aiortc.contrib.signaling import object_from_string, object_to_string
 
 class GamepadListener:
-    def __init__(self, server_url: str = "https://picar-e09b89d86d10.herokuapp.com/"):
+    def __init__(self, server_url: str = "https://picar-e09b89d86d10.herokuapp.com/", simulate: bool = False):
         self.server_url = server_url
+        self.simulate = bool(simulate)
         # Enable automatic reconnection with backoff
         self.sio = socketio.AsyncClient(
             reconnection=True,
@@ -35,6 +38,14 @@ class GamepadListener:
         self.data_channel = None
         self.controller_id = None
         self.pending_ice: list[dict] = []
+        
+        # Vehicle controller integrates throttle and steering
+        try:
+            from vehicle_control import VehicleController
+        except Exception:
+            # Fallback to relative import if executed as package
+            from .vehicle_control import VehicleController
+        self.vehicle = VehicleController(simulate=self.simulate)
         
     def setup_handlers(self):
         """Setup Socket.IO event handlers"""
@@ -172,7 +183,7 @@ class GamepadListener:
                 @channel.on("message")
                 def on_message(message):
                     if isinstance(message, bytes):
-                        self.log_gamepad_data(message)
+                        self.handle_vehicle_control(message)
                     else:
                         print(f"[{datetime.now().strftime('%H:%M:%S')}] Received non-binary message: {message}")
             
@@ -245,23 +256,13 @@ class GamepadListener:
         except struct.error as e:
             return {"error": f"Failed to parse data: {e}"}
     
-    def log_gamepad_data(self, data: bytes):
-        """Log received gamepad data in a readable format"""
-        parsed = self.parse_gamepad_data(data)
-        
-        if "error" in parsed:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Gamepad Data Error: {parsed['error']}")
+    def handle_vehicle_control(self, data: bytes):
+        """Parse control frame and apply to vehicle hardware."""
+        frame = self.parse_gamepad_data(data)
+        if "error" in frame:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Gamepad Data Error: {frame['error']}")
             return
-        
-        timestamp = datetime.fromtimestamp(parsed['timestamp_ms'] / 1000.0).strftime('%H:%M:%S.%f')[:-3]
-        
-        print(f"[{timestamp}] Gamepad Control Frame:")
-        print(f"  Sequence: {parsed['sequence']}")
-        print(f"  Throttle: {parsed['throttle']:6.3f} ({'Forward' if parsed['throttle'] > 0 else 'Reverse' if parsed['throttle'] < 0 else 'Neutral'})")
-        print(f"  Steering: {parsed['steering']:6.3f} ({'Right' if parsed['steering'] > 0 else 'Left' if parsed['steering'] < 0 else 'Center'})")
-        print(f"  Buttons:  {parsed['buttons'] if parsed['buttons'] else 'None'}")
-        print(f"  Flags:    {parsed['flags']:02x}")
-        print()
+        self.vehicle.apply_control(frame)
     
     async def connect_to_server(self):
         """Connect to the Socket.IO server with retry/backoff."""
@@ -280,6 +281,10 @@ class GamepadListener:
     
     async def cleanup(self):
         """Cleanup resources"""
+        try:
+            self.vehicle.cleanup()
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Vehicle cleanup error: {e}")
         if self.pc:
             await self.pc.close()
             self.pc = None
@@ -289,6 +294,7 @@ class GamepadListener:
     async def run(self):
         """Main run loop"""
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Pi Gamepad Listener Starting...")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Mode: {'SIMULATION' if self.simulate else 'PI (HARDWARE)'}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Server: {self.server_url}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Room: {self.room_id}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Username: {self.username}")
@@ -307,7 +313,11 @@ class GamepadListener:
 
 async def main():
     """Main entry point"""
-    listener = GamepadListener()
+    parser = argparse.ArgumentParser(description="PiCar Gamepad Listener")
+    parser.add_argument("--sim", "--simulate", dest="simulate", action="store_true", help="Run in simulation mode (no hardware)")
+    parser.add_argument("--server", dest="server_url", default="https://picar-e09b89d86d10.herokuapp.com/", help="Signaling server URL")
+    args = parser.parse_args()
+    listener = GamepadListener(server_url=args.server_url, simulate=args.simulate)
     await listener.run()
 
 if __name__ == "__main__":
