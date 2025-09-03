@@ -31,6 +31,7 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const piUser = useMemo(() => {
     return Object.values(gamepadUsers).find((user: any) => user.userInfo?.role === 'Pi');
   }, [gamepadUsers])
+  const piUserIdRef = useRef<string | null>(null);
 
   // Gamepad hook configuration
   const {
@@ -48,6 +49,26 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     }
   });
+
+  // Attempt to start sending when conditions and channel are ready
+  const attemptStartSendingIfReady = useCallback(() => {
+    const ch = gamepadChannelRef.current;
+    console.log('Attempting to start sending...', {
+      role,
+      isGamepadConnected,
+      isGamepadSending,
+      ch,
+      readyState: ch?.readyState
+    });
+    if (
+      role === 'Controller' &&
+      isGamepadConnected &&
+      !isGamepadSending &&
+      ch && ch.readyState === 'open'
+    ) {
+      try { startSending(); } catch {}
+    }
+  }, [role, isGamepadConnected, isGamepadSending, startSending]);
 
   // Setup gamepad WebRTC data channel
   const setupGamepadDataChannel = useCallback(() => {
@@ -73,9 +94,19 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
           clearTimeout(gamepadReconnectTimeoutRef.current);
           gamepadReconnectTimeoutRef.current = null;
         }
+        // Try starting if channel is already open
+        attemptStartSendingIfReady();
       }
       if (state === 'disconnected' || state === 'failed') {
         handleGamepadReconnection();
+      }
+    };
+
+    // Monitor overall connection state for extra safety
+    gamepadPeerConnectionRef.current.onconnectionstatechange = () => {
+      const cs = gamepadPeerConnectionRef.current?.connectionState;
+      if (cs === 'connected') {
+        attemptStartSendingIfReady();
       }
     };
 
@@ -84,16 +115,15 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
       ordered: true,
       maxRetransmits: 3
     });
+    // Ensure ref is set immediately so reconnect logic can see the channel object
+    gamepadChannelRef.current = dataChannel;
 
     dataChannel.onopen = () => {
       console.log('Gamepad data channel opened');
       setIsGamepadChannelReady(true);
       setGamepadChannel(dataChannel);
       gamepadChannelRef.current = dataChannel;
-      // Auto-resume sending when channel opens
-      if (role === 'Controller' && isGamepadConnected && !isGamepadSending) {
-        try { startSending(); } catch {}
-      }
+      attemptStartSendingIfReady();
     };
 
     dataChannel.onclose = () => {
@@ -107,20 +137,25 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     dataChannel.onerror = (error) => {
       console.error('Gamepad data channel error:', error);
+      // Stop sending and trigger reconnection path
+      try { stopSending(); } catch {}
+      setIsGamepadChannelReady(false);
+      setGamepadChannel(null);
+      gamepadChannelRef.current = null;
+      handleGamepadReconnection();
     };
 
     // Handle incoming data channel
     gamepadPeerConnectionRef.current.ondatachannel = (event) => {
       const channel = event.channel;
+      // Set ref immediately
+      gamepadChannelRef.current = channel;
       channel.onopen = () => {
         console.log('Received gamepad data channel opened');
         setIsGamepadChannelReady(true);
         setGamepadChannel(channel);
         gamepadChannelRef.current = channel;
-        // Auto-resume sending when remote opens channel
-        if (role === 'Controller' && isGamepadConnected && !isGamepadSending) {
-          try { startSending(); } catch {}
-        }
+        attemptStartSendingIfReady();
       };
       channel.onclose = () => {
         console.log('Received gamepad data channel closed');
@@ -210,11 +245,11 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const handleIceCandidate = (event: RTCPeerConnectionIceEvent) => {
       if (event.candidate && socket) {
-        // Find the Car user in the GamepadChannel
-        if (piUser) {
-          console.log('Sending gamepad ICE candidate to:', piUser.userId);
+        const targetId = piUserIdRef.current;
+        if (targetId && gamepadUsers[targetId]) {
+          console.log('Sending gamepad ICE candidate to:', targetId);
           socket.emit('gamepad-ice-candidate', {
-            targetUserId: piUser.userId,
+            targetUserId: targetId,
             candidate: {
               candidate: event.candidate.candidate,
               sdpMLineIndex: event.candidate.sdpMLineIndex,
@@ -259,6 +294,9 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
         data.users.forEach((user: any) => {
           if (user.id !== socket.id) {
             usersMap[user.id] = user;
+            if (user.userInfo?.role === 'Pi') {
+              piUserIdRef.current = user.id;
+            }
           }
         });
         setGamepadUsers(usersMap);
@@ -266,20 +304,28 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
 
     const handleUserJoined = (data: any) => {
+      if (!data.roomId || data.roomId !== 'GamepadChannel') return;
       console.log('User joined GamepadChannel:', data.userId, data);
       setGamepadUsers(prev => ({
         ...prev,
         [data.userId]: data
       }));
+      if (data.userInfo?.role === 'Pi') {
+        piUserIdRef.current = data.userId;
+      }
     };
 
     const handleUserLeft = (data: any) => {
+      if (!data.roomId || data.roomId !== 'GamepadChannel') return;
       console.log('User left GamepadChannel:', data.userId);
       setGamepadUsers(prev => {
         const newUsers = { ...prev };
         delete newUsers[data.userId];
         return newUsers;
       });
+      if (piUserIdRef.current === data.userId) {
+        piUserIdRef.current = null;
+      }
     };
 
     socket.on('joined-room', handleJoinedRoom);
@@ -313,28 +359,29 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Send gamepad offer when Car user joins GamepadChannel
   useEffect(() => {
     if (role === 'Controller' && gamepadPeerConnectionRef.current && socket) {
-      if (piUser && !isGamepadChannelReady) {
-        console.log('Car user found in GamepadChannel, sending gamepad offer to:', piUser.userId);
+      const targetId = piUserIdRef.current;
+      if (targetId && gamepadUsers[targetId] && !isGamepadChannelReady) {
+        console.log('Pi user found in GamepadChannel, sending gamepad offer to:', targetId);
 
         // Create and send offer
         gamepadPeerConnectionRef.current.createOffer()
           .then(async (offer) => {
             await gamepadPeerConnectionRef.current!.setLocalDescription(offer);
             socket.emit('gamepad-offer', {
-              targetUserId: piUser.userId,
+              targetUserId: targetId,
               offer: {
                 type: offer.type,
                 sdp: offer.sdp
               }
             });
-            console.log('Sent gamepad offer to:', piUser.userId);
+            console.log('Sent gamepad offer to:', targetId);
           })
           .catch((error) => {
             console.error('Error creating gamepad offer:', error);
           });
       }
     }
-  }, [gamepadUsers, role, socket, isGamepadChannelReady, piUser]);
+  }, [gamepadUsers, role, socket, isGamepadChannelReady]);
 
   // Handle gamepad WebRTC signaling events
   useEffect(() => {

@@ -103,6 +103,7 @@ export const useGamepad = (options: UseGamepadOptions = {}): UseGamepadReturn =>
     const gamepad = gamepads[gamepadIndex];
     
     if (!gamepad) {
+      console.log('No gamepad found.. WHY??');
       setGamepadState(prev => ({
         ...prev,
         connected: false,
