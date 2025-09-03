@@ -35,15 +35,13 @@ class ThrottleController:
     # PWM frequencies
     ESC_FREQ_HZ = 50     # ESC expects ~50 Hz
     
+    # Fixed power limit
+    POWER_LIMIT_PERCENT = 20.0
+    
     def __init__(self, simulate: bool = False):
         self.pi = None
         self.simulate = bool(simulate)
         self.current_throttle = 0.0      # -1.0 to 1.0
-        self.throttle_lock = False       # Must be True (held down) to move
-        self.emergency_brake = False     # Must be False (released) to move
-        self.power_lock_enabled = True   # Power limit toggle (default: ON)
-        self.power_lock_percent = 25.0   # Max power percentage (default: 25%)
-        self.last_control_time = 0
         
         if HARDWARE_AVAILABLE and not self.simulate:
             self.initialize_hardware()
@@ -74,35 +72,20 @@ class ThrottleController:
             HARDWARE_AVAILABLE = False
     
     def map_throttle_to_pulse(self, throttle_value: float) -> int:
-        """Map throttle value (-1.0 to 1.0) to ESC pulse width"""
-        # Safety check: BOTH conditions must be met for vehicle to move
-        # 1. Emergency brake must be RELEASED (False)
-        # 2. Throttle lock must be HELD DOWN (True)
-        if self.emergency_brake or not self.throttle_lock:
-            if self.emergency_brake:
-                logger.debug("Throttle blocked: Emergency brake is active")
-            if not self.throttle_lock:
-                logger.debug("Throttle blocked: Throttle lock not held down")
+        """Map throttle value (-1.0 to 1.0) to ESC pulse width with fixed 20% power limit"""
+        limited = throttle_value * (self.POWER_LIMIT_PERCENT / 100.0)
+        if abs(limited) < 0.05:  # Deadzone
             return self.NEUTRAL
         
-        # Apply power lock percentage only if enabled
-        if self.power_lock_enabled:
-            max_power = self.power_lock_percent / 100.0
-            throttle_value *= max_power
-            logger.debug(f"Power limit applied: {self.power_lock_percent:.1f}% -> {throttle_value:.3f}")
-        
-        if abs(throttle_value) < 0.05:  # Deadzone
-            return self.NEUTRAL
-        
-        if throttle_value < 0:  # Forward (was > 0, now < 0)
+        if limited < 0:  # Forward (negative input)
             lo = self.DB_HIGH + 5
             hi = self.MAX_US
-            pct = min(1.0, abs(throttle_value))  # Use abs() since value is negative
+            pct = min(1.0, abs(limited))  # Use abs() since value is negative
             return int(lo + (hi - lo) * pct)
-        else:  # Reverse (was < 0, now > 0)
+        else:  # Reverse (positive input)
             hi = self.DB_LOW - 5
             lo = self.MIN_US
-            pct = min(1.0, throttle_value)  # Value is positive now
+            pct = min(1.0, limited)  # Value is positive now
             return int(hi - (hi - lo) * pct)
     
     def update_throttle(self, throttle_value: float):
@@ -110,35 +93,6 @@ class ThrottleController:
         self.current_throttle = float(throttle_value)
         logger.info(f"Throttle: {self.current_throttle:.3f}")
     
-    def update_throttle_lock(self, locked: bool):
-        """Update throttle lock state (deadman switch)"""
-        self.throttle_lock = bool(locked)
-        if self.throttle_lock:
-            logger.info("Throttle Lock: HELD DOWN - vehicle can move (if emergency brake is released)")
-        else:
-            logger.info("Throttle Lock: RELEASED - vehicle cannot move (deadman switch)")
-            # Immediately stop if throttle lock is released
-            if not self.emergency_brake:  # Only stop if not already stopped by emergency brake
-                self.stop_vehicle()
-    
-    def update_emergency_brake(self, active: bool):
-        """Update emergency brake state"""
-        self.emergency_brake = bool(active)
-        if self.emergency_brake:
-            logger.warning("EMERGENCY BRAKE ACTIVATED - STOPPING VEHICLE IMMEDIATELY")
-            self.stop_vehicle()
-        else:
-            logger.info("Emergency brake released - vehicle can move if throttle lock is held")
-    
-    def update_power_lock(self, enabled: bool, power_percent: float = 100.0):
-        """Update power lock settings"""
-        self.power_lock_enabled = bool(enabled)
-        self.power_lock_percent = float(power_percent)
-        
-        if enabled:
-            logger.info(f"Power Lock: {self.power_lock_percent:.1f}% (ENABLED)")
-        else:
-            logger.info("Power Lock: DISABLED (100% power available)")
     
     def apply_throttle(self):
         """Apply current throttle value to hardware"""
@@ -183,19 +137,9 @@ class ThrottleController:
     
     def get_status(self):
         """Get current throttle status"""
-        can_move = not self.emergency_brake and self.throttle_lock
         return {
             'throttle': self.current_throttle,
-            'throttle_lock': self.throttle_lock,
-            'emergency_brake': self.emergency_brake,
-            'power_lock_enabled': self.power_lock_enabled,
-            'power_lock_percent': self.power_lock_percent,
             'hardware_available': HARDWARE_AVAILABLE,
-            'can_move': can_move,
-            'safety_status': {
-                'emergency_brake_active': self.emergency_brake,
-                'throttle_lock_held': self.throttle_lock,
-                'vehicle_allowed_to_move': can_move
-            }
+            'power_limit_percent': self.POWER_LIMIT_PERCENT
         }
 
