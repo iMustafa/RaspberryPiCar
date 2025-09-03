@@ -9,7 +9,11 @@ const VideoControls: React.FC = () => {
 
   const handleFullscreen = () => {
     if (document.documentElement.requestFullscreen) {
-      document.documentElement.requestFullscreen();
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        document.documentElement.requestFullscreen();
+      }
     }
   };
 
