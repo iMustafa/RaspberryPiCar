@@ -1,6 +1,9 @@
 import { WebRTCSignalingServer } from './WebRTCSignalingServer';
 
-const server = new WebRTCSignalingServer();
+const server = new WebRTCSignalingServer({
+  port: parseInt(process.env.PORT || '3000'),
+  corsOrigin: '*'
+});
 
 server.start().catch(console.error);
 
