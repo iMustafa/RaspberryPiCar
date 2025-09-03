@@ -19,7 +19,14 @@ from aiortc.contrib.signaling import object_from_string, object_to_string
 class GamepadListener:
     def __init__(self, server_url: str = "http://localhost:3000"):
         self.server_url = server_url
-        self.sio = socketio.AsyncClient()
+        # Enable automatic reconnection with backoff
+        self.sio = socketio.AsyncClient(
+            reconnection=True,
+            reconnection_attempts=0,            # 0 = infinite attempts
+            reconnection_delay=1,               # initial delay (seconds)
+            reconnection_delay_max=10,          # max delay between attempts
+            randomization_factor=0.2            # add jitter
+        )
         self.setup_handlers()
         self.connected = False
         self.room_id = "GamepadChannel"
@@ -52,6 +59,19 @@ class GamepadListener:
         async def disconnect():
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Disconnected from server")
             self.connected = False
+            # Close current peer connection so we can accept a fresh offer on reconnect
+            if self.pc:
+                try:
+                    await self.pc.close()
+                except Exception:
+                    pass
+                self.pc = None
+                self.data_channel = None
+                self.pending_ice.clear()
+
+        @self.sio.event
+        async def connect_error(data=None):
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Connect error: {data}")
         
         @self.sio.event
         async def joined_room(data: Dict[str, Any]):
@@ -244,15 +264,19 @@ class GamepadListener:
         print()
     
     async def connect_to_server(self):
-        """Connect to the Socket.IO server"""
-        try:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Connecting to {self.server_url}...")
-            await self.sio.connect(self.server_url)
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Connected successfully!")
-            return True
-        except Exception as e:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Failed to connect: {e}")
-            return False
+        """Connect to the Socket.IO server with retry/backoff."""
+        attempt = 1
+        while True:
+            try:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Connecting to {self.server_url} (attempt {attempt})...")
+                await self.sio.connect(self.server_url)
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Connected successfully!")
+                return True
+            except Exception as e:
+                delay = min(1 * (2 ** (attempt - 1)), 10)
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Failed to connect: {e}. Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+                attempt += 1
     
     async def cleanup(self):
         """Cleanup resources"""

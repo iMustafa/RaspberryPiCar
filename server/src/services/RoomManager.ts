@@ -45,6 +45,19 @@ export class RoomManager {
     return room;
   }
 
+  removeUserEverywhere(userId: string): void {
+    for (const [roomId, room] of this.rooms.entries()) {
+      const before = room.users.length;
+      room.users = room.users.filter(u => u.id !== userId);
+      if (before !== room.users.length) {
+        // Optionally emit events elsewhere if needed
+      }
+      if (room.users.length === 0) {
+        this.deleteRoom(roomId);
+      }
+    }
+  }
+
   getAllRooms(): Array<{ roomId: string; userCount: number; createdAt: Date }> {
     return Array.from(this.rooms.entries()).map(([roomId, room]) => ({
       roomId,

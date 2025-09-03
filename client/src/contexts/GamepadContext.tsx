@@ -25,6 +25,8 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const gamepadChannelRef = useRef<RTCDataChannel | null>(null);
   const gamepadPeerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const gamepadReconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [isGamepadReconnecting, setIsGamepadReconnecting] = useState(false);
 
   const piUser = useMemo(() => {
     return Object.values(gamepadUsers).find((user: any) => user.userInfo?.role === 'Pi');
@@ -41,7 +43,6 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
   } = useGamepad({
     sendFrequency: 60,
     onByteArray: (data: ArrayBuffer) => {
-      console.log('Sending gamepad data over WebRTC data channel', data);
       if (gamepadChannelRef.current && gamepadChannelRef.current.readyState === 'open') {
         gamepadChannelRef.current.send(data);
       }
@@ -61,6 +62,23 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     gamepadPeerConnectionRef.current = new RTCPeerConnection(configuration);
 
+    // Monitor ICE connection state for reconnection
+    gamepadPeerConnectionRef.current.oniceconnectionstatechange = () => {
+      const state = gamepadPeerConnectionRef.current?.iceConnectionState;
+      console.log('Gamepad ICE state:', state);
+      if (!state) return;
+      if (state === 'connected' || state === 'completed') {
+        setIsGamepadReconnecting(false);
+        if (gamepadReconnectTimeoutRef.current) {
+          clearTimeout(gamepadReconnectTimeoutRef.current);
+          gamepadReconnectTimeoutRef.current = null;
+        }
+      }
+      if (state === 'disconnected' || state === 'failed') {
+        handleGamepadReconnection();
+      }
+    };
+
     // Create data channel for gamepad data
     const dataChannel = gamepadPeerConnectionRef.current.createDataChannel('gamepad', {
       ordered: true,
@@ -72,6 +90,10 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setIsGamepadChannelReady(true);
       setGamepadChannel(dataChannel);
       gamepadChannelRef.current = dataChannel;
+      // Auto-resume sending when channel opens
+      if (role === 'Controller' && isGamepadConnected && !isGamepadSending) {
+        try { startSending(); } catch {}
+      }
     };
 
     dataChannel.onclose = () => {
@@ -79,6 +101,8 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setIsGamepadChannelReady(false);
       setGamepadChannel(null);
       gamepadChannelRef.current = null;
+      // Ensure we stop sending frames so auto-start can re-arm later
+      try { stopSending(); } catch {}
     };
 
     dataChannel.onerror = (error) => {
@@ -93,11 +117,92 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setIsGamepadChannelReady(true);
         setGamepadChannel(channel);
         gamepadChannelRef.current = channel;
+        // Auto-resume sending when remote opens channel
+        if (role === 'Controller' && isGamepadConnected && !isGamepadSending) {
+          try { startSending(); } catch {}
+        }
+      };
+      channel.onclose = () => {
+        console.log('Received gamepad data channel closed');
+        setIsGamepadChannelReady(false);
+        setGamepadChannel(null);
+        gamepadChannelRef.current = null;
+        try { stopSending(); } catch {}
       };
     };
 
     return gamepadPeerConnectionRef.current;
   }, [socket, role]);
+
+  // Reconnection handler with exponential backoff
+  const handleGamepadReconnection = useCallback(() => {
+    if (isGamepadReconnecting) return;
+    if (!socket || role !== 'Controller') return;
+    if (!piUser) {
+      console.log('Gamepad reconnection skipped: no Pi user');
+      return;
+    }
+
+    setIsGamepadReconnecting(true);
+
+    const attemptReconnect = (attempt: number = 1) => {
+      const maxAttempts = 5;
+      const baseDelay = 1000;
+      const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), 10000);
+
+      gamepadReconnectTimeoutRef.current = setTimeout(async () => {
+        try {
+          // Close existing
+          if (gamepadPeerConnectionRef.current) {
+            gamepadPeerConnectionRef.current.onicecandidate = null;
+            gamepadPeerConnectionRef.current.oniceconnectionstatechange = null;
+            try { gamepadPeerConnectionRef.current.close(); } catch {}
+            gamepadPeerConnectionRef.current = null;
+          }
+
+          // Recreate PC and datachannel
+          setupGamepadDataChannel();
+
+          if (!gamepadPeerConnectionRef.current) throw new Error('Failed to recreate gamepad PC');
+
+          const pc = gamepadPeerConnectionRef.current as RTCPeerConnection;
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit('gamepad-offer', {
+            targetUserId: piUser.userId,
+            offer: { type: offer.type, sdp: offer.sdp }
+          });
+          console.log('Gamepad reconnection: sent offer to', piUser.userId);
+
+          // Give it a moment to connect; if not, retry
+          setTimeout(() => {
+            const ice = gamepadPeerConnectionRef.current?.iceConnectionState;
+            if (ice === 'connected' || ice === 'completed') {
+              setIsGamepadReconnecting(false);
+              if (gamepadReconnectTimeoutRef.current) {
+                clearTimeout(gamepadReconnectTimeoutRef.current);
+                gamepadReconnectTimeoutRef.current = null;
+              }
+            } else if (attempt < maxAttempts) {
+              attemptReconnect(attempt + 1);
+            } else {
+              console.log('Gamepad reconnection: max attempts reached');
+              setIsGamepadReconnecting(false);
+            }
+          }, 2000);
+        } catch (e) {
+          console.error('Gamepad reconnection attempt failed:', e);
+          if (attempt < maxAttempts) {
+            attemptReconnect(attempt + 1);
+          } else {
+            setIsGamepadReconnecting(false);
+          }
+        }
+      }, delay);
+    };
+
+    attemptReconnect();
+  }, [isGamepadReconnecting, socket, role, piUser, setupGamepadDataChannel]);
 
   // Handle ICE candidates separately to avoid closure issues
   useEffect(() => {
@@ -258,7 +363,10 @@ export const GamepadProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const handleGamepadAnswer = async (data: any) => {
       console.log('Received gamepad answer:', data);
-      if (!gamepadPeerConnectionRef.current) return;
+      if (!gamepadPeerConnectionRef.current) {
+        console.log('Gamepad peer connection not found');
+        return;
+      }
 
       try {
         await gamepadPeerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));

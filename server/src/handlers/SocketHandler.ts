@@ -73,7 +73,7 @@ export class SocketHandler {
       return;
     }
 
-    this.handleLeaveRoom(socket);
+    // Allow multi-room membership (VideoChannel + GamepadChannel)
     
     const user = this.userManager.getUser(socket.id);
     if (!user) return;
@@ -97,7 +97,8 @@ export class SocketHandler {
     socket.to(roomId).emit('user-joined', {
       userId: socket.id,
       userInfo,
-      joinedAt: user.joinedAt
+      joinedAt: user.joinedAt,
+      roomId
     });
 
     console.log(`User ${socket.id} joined room ${roomId}`);
@@ -110,7 +111,7 @@ export class SocketHandler {
     const roomId = user.roomId;
     const room = this.roomManager.removeUserFromRoom(roomId, socket.id);
     
-    socket.to(roomId).emit('user-left', { userId: socket.id });
+    socket.to(roomId).emit('user-left', { userId: socket.id, roomId });
     socket.leave(roomId);
     user.roomId = null;
 
@@ -158,7 +159,8 @@ export class SocketHandler {
 
   private handleDisconnect(socket: Socket): void {
     console.log(`User disconnected: ${socket.id}`);
-    this.handleLeaveRoom(socket);
+    // Remove user from all rooms
+    this.roomManager.removeUserEverywhere(socket.id);
     this.userManager.removeUser(socket.id);
   }
 }
