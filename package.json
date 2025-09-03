@@ -1,0 +1,18 @@
+{
+  "name": "picar-monorepo",
+  "private": true,
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "engines": {
+    "node": "20.x",
+    "npm": ">=8"
+  },
+  "scripts": {
+    "build": "npm run build -w client && npm run copy-client && npm run build -w server",
+    "copy-client": "rm -rf server/public && mkdir -p server/public && cp -r client/build/* server/public/",
+    "start": "npm run start -w server",
+    "heroku-postbuild": "CI=false npm run build"
+  }
+}

@@ -225,7 +225,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setLocalStream(stream);
       
       // Setup Socket.IO connection
-      socket.current = io('http://localhost:3000');
+      socket.current = io(window.location.origin);
       
       socket.current.on('connect', () => {
         console.log('Connected to server with ID:', socket.current?.id);
