@@ -17,7 +17,7 @@ from aiortc.sdp import candidate_from_sdp
 from aiortc.contrib.signaling import object_from_string, object_to_string
 
 class GamepadListener:
-    def __init__(self, server_url: str = "http://localhost:3000"):
+    def __init__(self, server_url: str = "https://picar-e09b89d86d10.herokuapp.com/"):
         self.server_url = server_url
         # Enable automatic reconnection with backoff
         self.sio = socketio.AsyncClient(
