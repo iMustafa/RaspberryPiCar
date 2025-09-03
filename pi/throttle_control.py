@@ -36,7 +36,7 @@ class ThrottleController:
     ESC_FREQ_HZ = 50     # ESC expects ~50 Hz
     
     # Fixed power limit
-    POWER_LIMIT_PERCENT = 20.0
+    POWER_LIMIT_PERCENT = 40.0
     
     def __init__(self, simulate: bool = False):
         self.pi = None
