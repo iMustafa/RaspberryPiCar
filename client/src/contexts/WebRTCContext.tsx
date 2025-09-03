@@ -1,15 +1,15 @@
 import React, { createContext, useState, useRef, useCallback } from 'react';
 import io from 'socket.io-client';
 import type { Socket } from 'socket.io-client';
-import { 
-  WebRTCContextType, 
-  JoinRoomData, 
+import {
+  WebRTCContextType,
+  JoinRoomData,
   JoinedRoomData,
   UserJoinedData,
   UserLeftData,
-  OfferData, 
-  AnswerData, 
-  IceCandidateData, 
+  OfferData,
+  AnswerData,
+  IceCandidateData,
   RemoteControlData,
   ErrorData
 } from '../types';
@@ -28,7 +28,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [currentCall, setCurrentCall] = useState<string | null>(null);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [targetUserRole, setTargetUserRole] = useState<'Controller' | 'Car' | null>(null);
-  
+
   const socket = useRef<typeof Socket | null>(null);
   const pc = useRef<RTCPeerConnection | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -47,9 +47,9 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const configuration = {
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     };
-    
+
     pc.current = new RTCPeerConnection(configuration);
-    
+
     pc.current.onicecandidate = (event) => {
       if (event.candidate && socket.current) {
         const userId = targetUserId || currentCall;
@@ -66,7 +66,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
     };
-    
+
     pc.current.ontrack = (event) => {
       setRemoteStream(event.streams[0]);
     };
@@ -75,7 +75,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     pc.current.oniceconnectionstatechange = () => {
       const state = pc.current?.iceConnectionState;
       console.log('ICE connection state changed to:', state);
-      
+
       switch (state) {
         case 'connected':
         case 'completed':
@@ -86,21 +86,21 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             reconnectTimeoutRef.current = null;
           }
           break;
-          
+
         case 'disconnected':
           console.log('ICE connection disconnected, attempting reconnection...');
           handleReconnection(targetUserId);
           break;
-          
+
         case 'failed':
           console.log('ICE connection failed, attempting reconnection...');
           handleReconnection(targetUserId);
           break;
-          
+
         case 'closed':
           console.log('ICE connection closed');
           break;
-          
+
         default:
           console.log('ICE connection state:', state);
       }
@@ -110,13 +110,13 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     pc.current.onconnectionstatechange = () => {
       const state = pc.current?.connectionState;
       console.log('Connection state changed to:', state);
-      
+
       if (state === 'failed') {
         console.log('Connection failed, attempting reconnection...');
         handleReconnection(targetUserId);
       }
     };
-    
+
     return pc.current;
   }, [currentCall]);
 
@@ -128,14 +128,14 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
 
     let userId = targetUserId || currentCall;
-    
+
     // If we don't have a specific user ID, try to find by role
     if (!userId && targetUserRole) {
       const oppositeRole = targetUserRole === 'Controller' ? 'Car' : 'Controller';
       userId = findTargetUserByRole(oppositeRole);
       console.log('Found target user by role:', userId, 'for role:', oppositeRole);
     }
-    
+
     if (!userId || !localStream) {
       console.log('userId', userId, 'localStream exists:', !!localStream);
       console.log('Cannot reconnect: missing target user or local stream');
@@ -180,8 +180,8 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
           // Check if reconnection was successful
           setTimeout(() => {
-            if (pc.current?.iceConnectionState === 'connected' || 
-                pc.current?.iceConnectionState === 'completed') {
+            if (pc.current?.iceConnectionState === 'connected' ||
+              pc.current?.iceConnectionState === 'completed') {
               console.log('Reconnection successful!');
               setIsReconnecting(false);
             } else if (attempt < maxAttempts) {
@@ -212,25 +212,49 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     attemptReconnect();
   }, [isReconnecting, currentCall, localStream, role, targetUserRole, findTargetUserByRole]);
 
+
+  const getUserMedia = useCallback(async (c: MediaStreamConstraints) => {
+    try {
+      return await navigator.mediaDevices.getUserMedia(c);
+    } catch (e: any) {
+      throw e;
+    }
+  }, []);
+
+  const getCameraStream = useCallback(async () => {
+    const constraints: MediaStreamConstraints[] = [
+      { video: true, audio: true },                                  // simplest
+      { video: true, audio: false },                                 // no mic available
+      { video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false }, // low-res fallback
+    ]
+
+    for (const c of constraints) {
+      try {
+        return await getUserMedia(c);
+      } catch (e: any) {
+        if (e?.name === 'NotAllowedError') throw e; // user denied -> stop
+        // else try next
+      }
+    }
+    throw new Error('Unable to acquire camera stream');
+  }, [getUserMedia])
+
   const connect = useCallback(async (selectedRole: 'Controller' | 'Car') => {
     try {
       setRole(selectedRole);
-      
+
       // Get user media
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true
-      });
-      
+      const stream = await getCameraStream();
+
       setLocalStream(stream);
-      
+
       // Setup Socket.IO connection
       socket.current = io(window.location.origin);
-      
+
       socket.current.on('connect', () => {
         console.log('Connected to server with ID:', socket.current?.id);
         setIsConnected(true);
-        
+
         // Join the VideoChannel room
         const joinData: JoinRoomData = {
           roomId: 'VideoChannel',
@@ -268,7 +292,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           ...prev,
           [data.userId]: data
         }));
-        
+
         // If we're a Controller and a Car joined, initiate the call
         if (selectedRole === 'Controller' && data.userInfo?.role === 'Car') {
           console.log('Controller initiating call to Car:', data.userId);
@@ -283,7 +307,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           delete newUsers[data.userId];
           return newUsers;
         });
-        
+
         if (currentCall === data.userId) {
           hangup();
         }
@@ -308,7 +332,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       socket.current.on('error', (data: ErrorData) => {
         console.error('Socket error:', data.message);
       });
-      
+
     } catch (error) {
       console.error('Error connecting:', error);
     }
@@ -318,27 +342,27 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const initiateCall = useCallback(async (targetUserId: string, stream: MediaStream) => {
     try {
       setCurrentCall(targetUserId);
-      
+
       // Find and track the target user's role
       const targetUser = users[targetUserId];
       if (targetUser?.userInfo?.role) {
         setTargetUserRole(targetUser.userInfo.role);
       }
-      
+
       // Close existing connection if any
       if (pc.current) {
         pc.current.close();
         pc.current = null;
       }
-      
+
       setupPeerConnection(targetUserId);
-      
+
       if (!pc.current) {
         throw new Error('Failed to create peer connection');
       }
-      
+
       const peerConnection = pc.current as RTCPeerConnection;
-      
+
       // Add local stream to peer connection
       stream.getTracks().forEach(track => {
         peerConnection.addTrack(track, stream);
@@ -367,27 +391,27 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const handleOffer = useCallback(async (data: OfferData, stream: MediaStream) => {
     try {
       setCurrentCall(data.fromUserId);
-      
+
       // Find and track the target user's role
       const targetUser = users[data.fromUserId];
       if (targetUser?.userInfo?.role) {
         setTargetUserRole(targetUser.userInfo.role);
       }
-      
+
       // Close existing connection if any
       if (pc.current) {
         pc.current.close();
         pc.current = null;
       }
-      
+
       setupPeerConnection(data.fromUserId);
-      
+
       if (!pc.current) {
         throw new Error('Failed to create peer connection');
       }
-      
+
       const peerConnection = pc.current as RTCPeerConnection;
-      
+
       // Add local stream to peer connection
       stream.getTracks().forEach(track => {
         peerConnection.addTrack(track, stream);
@@ -442,7 +466,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setRemoteStream(null);
     setIsReconnecting(false);
     setTargetUserRole(null);
-    
+
     // Clear any pending reconnection attempts
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -486,7 +510,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     localStream?.getTracks().forEach(track => track.stop());
     hangup();
     socket.current?.disconnect();
-    
+
     setLocalStream(null);
     setRemoteStream(null);
     setIsConnected(false);
@@ -498,7 +522,7 @@ export const WebRTCProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setCurrentCall(null);
     setIsReconnecting(false);
     setTargetUserRole(null);
-    
+
     // Clear any pending reconnection attempts
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
